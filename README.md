@@ -13,13 +13,6 @@ This software package can be used without writing a single line of code, just do
 
 Once the software is open, open up the dataset you want to explore. To do this go to File>Open Data or press Ctrl+O this will open up a window prompt where you can select the required dataset.
 
-Plot settings can be opened by click the "Plot Setting" button below "File" and "About"
-
-<p align="center"><img src="/imgs/software_plotsettings.png" width="500" height="500"/></p>
-
-X and Y ranges for the 1D Graphs can be altered live. X and Y ranges, the intensity range and the number of contour levels for the 2D plot can also be altered in real time.
-These settings are stored locally for convenience.
-
 <b>NB</b> The datasets used with this software must use the csv file format and have the following layout: first cell is empty, first row excitation wavelengths, first column emission wavelengths and the rest of the cells contain intensity data.
 
 <p align="center"><img src="/imgs/software_tabs.png" width="1000" height="500"/></p>
