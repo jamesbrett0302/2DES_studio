@@ -8,6 +8,7 @@ import pathlib
 import numpy as np
 import json
 import os
+from matplotlib.transforms import Bbox
 
 
 class _2DFM_Studio(Framework):
@@ -31,6 +32,7 @@ class _2DFM_Studio(Framework):
         self.plot_settings_window = None
         self.plot_settings_vars = {}
         self.xy_mesh = None
+        self.current_data_file = None
 
         local_appdata = pathlib.Path(os.environ.get("LOCALAPPDATA", pathlib.Path.home()))
         self.settings_dir = local_appdata / "2DES Studio"
@@ -57,6 +59,13 @@ class _2DFM_Studio(Framework):
             command=self.open_plot_settings_window
         )
         self.settings_button.pack(side="left", padx=4)
+
+        self.export_button = ttk.Button(
+            self.top_bar,
+            text="Export 2D PNG",
+            command=self.export_2d_png
+        )
+        self.export_button.pack(side="left", padx=4)
 
         self.button = ttk.Button(
             self.top_bar,
@@ -130,6 +139,7 @@ class _2DFM_Studio(Framework):
         self.model.ex_ind = 0
 
         path = pathlib.Path(p)
+        self.current_data_file = path
         self._2DFM.open(path)
 
         self._draw_experimental_plots()
@@ -168,14 +178,77 @@ class _2DFM_Studio(Framework):
             self.tabs["fit"]["canvas"].draw()
             self.update()
 
-    def open_settings_folder(self):
+    def export_2d_png(self):
+        if not self._2DFM.is_loaded:
+            messagebox.showwarning("No data loaded", "Please load a data file before exporting a PNG.")
+            return
+
+        if self.current_data_file is not None:
+            default_name = f"{self.current_data_file.stem}.png"
+            initial_dir = str(self.current_data_file.parent)
+        else:
+            default_name = "2d_heatmap.png"
+            initial_dir = str(pathlib.Path.home())
+
+        save_path = filedialog.asksaveasfilename(
+            title="Export 2D Heatmap PNG",
+            defaultextension=".png",
+            filetypes=[("PNG image", "*.png")],
+            initialfile=default_name,
+            initialdir=initial_dir,
+        )
+
+        if save_path == "":
+            return
+
+        try:
+            fig = self.tabs["view"]["fig"]
+            heatmap_ax = self.tabs["view"]["ax3"]
+            colorbar_ax = self.tabs["view"].get("ax3_cax", None)
+
+            # Ensure layout is fully rendered before measuring extents
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+
+            bbox = heatmap_ax.get_tightbbox(renderer)
+
+            if colorbar_ax is not None:
+                cbbox = colorbar_ax.get_tightbbox(renderer)
+                bbox = Bbox.union([bbox, cbbox])
+
+            # small padding around exported region
+            bbox = bbox.expanded(1.02, 1.02)
+            bbox_inches = bbox.transformed(fig.dpi_scale_trans.inverted())
+
+            fig.savefig(save_path, dpi=300, bbox_inches=bbox_inches)
+            messagebox.showinfo("Export PNG", f"Saved 2D heatmap PNG to:\n{save_path}")
+
+        except Exception as exc:
+            messagebox.showerror("Export PNG", f"Could not save PNG:\n{exc}")
+
+    def open_settings_file(self):
         try:
             if self.settings_file.exists():
-                os.startfile(str(self.settings_file.parent))
+                os.startfile(str(self.settings_file))
             else:
-                os.startfile(str(self.settings_dir))
+                messagebox.showinfo(
+                    "Settings File",
+                    f"The settings file does not exist yet.\n\nExpected location:\n{self.settings_file}"
+                )
         except Exception as exc:
-            messagebox.showerror("Open Settings Folder", f"Could not open settings folder:\n{exc}")
+            try:
+                os.startfile(str(self.settings_dir))
+            except Exception:
+                messagebox.showerror("Open Settings File", f"Could not open settings file or folder:\n{exc}")
+
+    def copy_settings_path(self):
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(str(self.settings_file))
+            self.root.update()
+            messagebox.showinfo("Copy Settings Path", "Settings file path copied to clipboard.")
+        except Exception as exc:
+            messagebox.showerror("Copy Settings Path", f"Could not copy settings path:\n{exc}")
 
     def open_plot_settings_window(self):
         if self.plot_settings_window is not None and self.plot_settings_window.winfo_exists():
@@ -288,7 +361,8 @@ class _2DFM_Studio(Framework):
         button_frame = ttk.Frame(outer)
         button_frame.grid(row=5, column=0, sticky="e")
 
-        ttk.Button(button_frame, text="Open Settings Folder", command=self.open_settings_folder).pack(side="left", padx=4)
+        ttk.Button(button_frame, text="Open Settings File", command=self.open_settings_file).pack(side="left", padx=4)
+        ttk.Button(button_frame, text="Copy Settings Path", command=self.copy_settings_path).pack(side="left", padx=4)
         ttk.Button(button_frame, text="Apply", command=self.apply_plot_settings).pack(side="left", padx=4)
         ttk.Button(button_frame, text="Close", command=win.destroy).pack(side="left", padx=4)
 
