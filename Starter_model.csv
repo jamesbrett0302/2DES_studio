@@ -1,0 +1,4 @@
+amp,xc,yc,xwidth,ywidth,lineshape,draw
+3000000,500,650,35,45,gaussian,yes
+2000000,460,580,30,35,gaussian,yes
+1500000,580,700,40,40,gaussian,yes

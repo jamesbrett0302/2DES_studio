@@ -1,5 +1,5 @@
-# Modified to add configurable 1D/2D plot ranges, intensity limits, and contour levels
-# for 2DES Studio. Modernised for improved compatibility and robustness.
+# Modified to add configurable 1D/2D plot ranges, intensity limits, contour levels,
+# and helper functions for peak extraction/export in 2DES Studio.
 
 import numpy as np
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -29,6 +29,12 @@ class Spectrum:
     def Hz2nm(self, frequency, output_si_prefix="nano"):
         wavel = speed_of_light / frequency
         return wavel / self.SIprefix[output_si_prefix][1]
+
+    def nm_to_ev(self, wavelength_nm):
+        wavelength_nm = float(wavelength_nm)
+        if wavelength_nm <= 0:
+            return np.nan
+        return 1240.0 / wavelength_nm
 
 
 class _2DFM(Spectrum):
@@ -72,6 +78,9 @@ class _2DFM(Spectrum):
 
         self.data = self.data.apply(pd.to_numeric, errors="coerce").fillna(0)
         self.data[self.data < 0] = 0
+
+        self.ex_wavelengths = np.asarray(self.ex_wavelengths, dtype=float)
+        self.em_wavelengths = np.asarray(self.em_wavelengths, dtype=float)
 
     def clear(self, tabDict, emPlot_ax, exPlot_ax, cont_ax):
         if f"{cont_ax}_cb" in tabDict:
@@ -119,13 +128,13 @@ class _2DFM(Spectrum):
         if self.plot2d_xrange is not None:
             tabDict[ax].set_xlim(*self.plot2d_xrange)
         else:
-            tabDict[ax].set_xlim(230, 770)
+            tabDict[ax].set_xlim(float(np.min(self.ex_wavelengths)), float(np.max(self.ex_wavelengths)))
 
         if self.plot2d_yrange is not None:
             ymin, ymax = self.plot2d_yrange
             tabDict[ax].set_ylim(ymax, ymin)
         else:
-            tabDict[ax].set_ylim(800, 280)
+            tabDict[ax].set_ylim(float(np.max(self.em_wavelengths)), float(np.min(self.em_wavelengths)))
 
         tabDict[ax].set_xticks(np.arange(250, 771, 100))
         tabDict[ax].set_yticks(np.arange(300, 901, 100))
@@ -258,3 +267,114 @@ class _2DFM(Spectrum):
 
         self.apply_em_plot_limits(tabDict, emPlot_ax)
         self.apply_ex_plot_limits(tabDict, exPlot_ax)
+
+    # -------------------------
+    # Peak extraction helpers
+    # -------------------------
+
+    def nearest_ex_index(self, wavelength):
+        return int(np.argmin(np.abs(self.ex_wavelengths - float(wavelength))))
+
+    def nearest_em_index(self, wavelength):
+        return int(np.argmin(np.abs(self.em_wavelengths - float(wavelength))))
+
+    def get_intensity(self, em_index, ex_index):
+        return float(self.data.iloc[em_index, ex_index])
+
+    def get_excitation_slice(self, em_index):
+        y = self.data.iloc[em_index, :].to_numpy(dtype=float)
+        x = self.ex_wavelengths.astype(float)
+        return x, y
+
+    def get_emission_slice(self, ex_index):
+        x = self.em_wavelengths.astype(float)
+        y = self.data.iloc[:, ex_index].to_numpy(dtype=float)
+        return x, y
+
+    def get_slice_max(self, wavelengths, intensities):
+        idx = int(np.nanargmax(intensities))
+        return {
+            "index": idx,
+            "wavelength": float(wavelengths[idx]),
+            "intensity": float(intensities[idx]),
+        }
+
+    def estimate_fwhm(self, wavelengths, intensities):
+        wavelengths = np.asarray(wavelengths, dtype=float)
+        intensities = np.asarray(intensities, dtype=float)
+
+        if len(wavelengths) < 3 or np.nanmax(intensities) <= 0:
+            return np.nan
+
+        ymax = float(np.nanmax(intensities))
+        half = ymax / 2.0
+        above = np.where(intensities >= half)[0]
+
+        if len(above) < 2:
+            return np.nan
+
+        left = above[0]
+        right = above[-1]
+        return float(wavelengths[right] - wavelengths[left])
+
+    def integrate_slice(self, wavelengths, intensities):
+        wavelengths = np.asarray(wavelengths, dtype=float)
+        intensities = np.asarray(intensities, dtype=float)
+        return float(np.trapezoid(intensities, wavelengths))
+
+    def normalize_slice(self, intensities):
+        intensities = np.asarray(intensities, dtype=float)
+        max_val = float(np.nanmax(intensities)) if len(intensities) > 0 else 0.0
+        if max_val <= 0:
+            return np.zeros_like(intensities)
+        return intensities / max_val
+
+    def find_local_max(self, em_index, ex_index, em_half_window=2, ex_half_window=1):
+        """
+        Search a small local window around the clicked point.
+        Defaults reflect your grid density:
+        - emission step is finer, so a slightly larger row window is okay
+        - excitation step is coarser
+        """
+        n_em, n_ex = self.data.shape
+
+        em_lo = max(0, em_index - em_half_window)
+        em_hi = min(n_em, em_index + em_half_window + 1)
+
+        ex_lo = max(0, ex_index - ex_half_window)
+        ex_hi = min(n_ex, ex_index + ex_half_window + 1)
+
+        window = self.data.iloc[em_lo:em_hi, ex_lo:ex_hi].to_numpy(dtype=float)
+        rel_idx = np.unravel_index(np.nanargmax(window), window.shape)
+
+        best_em = em_lo + rel_idx[0]
+        best_ex = ex_lo + rel_idx[1]
+
+        return {
+            "em_index": int(best_em),
+            "ex_index": int(best_ex),
+            "lambda_em": float(self.em_wavelengths[best_em]),
+            "lambda_ex": float(self.ex_wavelengths[best_ex]),
+            "intensity": float(self.data.iloc[best_em, best_ex]),
+            "window_em_range": (int(em_lo), int(em_hi - 1)),
+            "window_ex_range": (int(ex_lo), int(ex_hi - 1)),
+        }
+
+    def get_local_window_dataframe(self, em_index, ex_index, em_half_window=2, ex_half_window=1):
+        n_em, n_ex = self.data.shape
+
+        em_lo = max(0, em_index - em_half_window)
+        em_hi = min(n_em, em_index + em_half_window + 1)
+
+        ex_lo = max(0, ex_index - ex_half_window)
+        ex_hi = min(n_ex, ex_index + ex_half_window + 1)
+
+        sub = self.data.iloc[em_lo:em_hi, ex_lo:ex_hi].to_numpy(dtype=float)
+        df = pd.DataFrame(
+            sub,
+            index=[float(v) for v in self.em_wavelengths[em_lo:em_hi]],
+            columns=[float(v) for v in self.ex_wavelengths[ex_lo:ex_hi]],
+        )
+        df.index.name = "Emission (nm)"
+        df.columns.name = "Excitation (nm)"
+        return df
