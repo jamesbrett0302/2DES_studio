@@ -1,5 +1,0 @@
-matplotlib
-scipy
-pandas
-numpy
-lmfit
